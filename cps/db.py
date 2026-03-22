@@ -20,9 +20,10 @@
 import os
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 import unidecode
+from weakref import WeakSet
 
 from sqlite3 import OperationalError as sqliteOperationalError
 from sqlalchemy import create_engine
@@ -40,16 +41,14 @@ except ImportError:
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import and_, true, false, text, func, or_
 from sqlalchemy.ext.associationproxy import association_proxy
-from flask_login import current_user
+from .cw_login import current_user
 from flask_babel import gettext as _
 from flask_babel import get_locale
 from flask import flash
 
 from . import logger, ub, isoLanguages
 from .pagination import Pagination
-
-from weakref import WeakSet
-
+from .string_helper import strip_whitespaces
 
 log = logger.create()
 
@@ -104,6 +103,7 @@ class Identifiers(Base):
     book = Column(Integer, ForeignKey('books.id'), nullable=False)
 
     def __init__(self, val, id_type, book):
+        super().__init__()
         self.val = val
         self.type = id_type
         self.book = book
@@ -128,6 +128,8 @@ class Identifiers(Base):
             return "Google Books"
         elif format_type == "kobo":
             return "Kobo"
+        elif format_type == "barnesnoble":
+            return "Barnes & Noble"
         elif format_type == "litres":
             return "ЛитРес"
         elif format_type == "issn":
@@ -161,6 +163,8 @@ class Identifiers(Base):
             return "https://books.google.com/books?id={0}".format(self.val)
         elif format_type == "kobo":
             return "https://www.kobo.com/ebook/{0}".format(self.val)
+        elif format_type == "barnesnoble":
+            return "https://www.barnesandnoble.com/w/{0}".format(self.val)
         elif format_type == "lubimyczytac":
             return "https://lubimyczytac.pl/ksiazka/{0}/ksiazka".format(self.val)
         elif format_type == "litres":
@@ -174,7 +178,7 @@ class Identifiers(Base):
         elif self.val.lower().startswith("javascript:"):
             return quote(self.val)
         elif self.val.lower().startswith("data:"):
-            link , __, __ = str.partition(self.val, ",")
+            link, __, __ = str.partition(self.val, ",")
             return link
         else:
             return "{0}".format(self.val)
@@ -188,6 +192,7 @@ class Comments(Base):
     text = Column(String(collation='NOCASE'), nullable=False)
 
     def __init__(self, comment, book):
+        super().__init__()
         self.text = comment
         self.book = book
 
@@ -205,6 +210,7 @@ class Tags(Base):
     name = Column(String(collation='NOCASE'), unique=True, nullable=False)
 
     def __init__(self, name):
+        super().__init__()
         self.name = name
 
     def get(self):
@@ -226,6 +232,7 @@ class Authors(Base):
     link = Column(String, nullable=False, default="")
 
     def __init__(self, name, sort, link=""):
+        super().__init__()
         self.name = name
         self.sort = sort
         self.link = link
@@ -248,6 +255,7 @@ class Series(Base):
     sort = Column(String(collation='NOCASE'))
 
     def __init__(self, name, sort):
+        super().__init__()
         self.name = name
         self.sort = sort
 
@@ -268,6 +276,7 @@ class Ratings(Base):
     rating = Column(Integer, CheckConstraint('rating>-1 AND rating<11'), unique=True)
 
     def __init__(self, rating):
+        super().__init__()
         self.rating = rating
 
     def get(self):
@@ -287,6 +296,7 @@ class Languages(Base):
     lang_code = Column(String(collation='NOCASE'), nullable=False, unique=True)
 
     def __init__(self, lang_code):
+        super().__init__()
         self.lang_code = lang_code
 
     def get(self):
@@ -310,6 +320,7 @@ class Publishers(Base):
     sort = Column(String(collation='NOCASE'))
 
     def __init__(self, name, sort):
+        super().__init__()
         self.name = name
         self.sort = sort
 
@@ -334,6 +345,7 @@ class Data(Base):
     name = Column(String, nullable=False)
 
     def __init__(self, book, book_format, uncompressed_size, name):
+        super().__init__()
         self.book = book
         self.format = book_format
         self.uncompressed_size = uncompressed_size
@@ -353,6 +365,7 @@ class Metadata_Dirtied(Base):
     book = Column(Integer, ForeignKey('books.id'), nullable=False, unique=True)
 
     def __init__(self, book):
+        super().__init__()
         self.book = book
 
 
@@ -365,10 +378,10 @@ class Books(Base):
     title = Column(String(collation='NOCASE'), nullable=False, default='Unknown')
     sort = Column(String(collation='NOCASE'))
     author_sort = Column(String(collation='NOCASE'))
-    timestamp = Column(TIMESTAMP, default=datetime.utcnow)
+    timestamp = Column(TIMESTAMP, default=lambda: datetime.now(timezone.utc))
     pubdate = Column(TIMESTAMP, default=DEFAULT_PUBDATE)
     series_index = Column(String, nullable=False, default="1.0")
-    last_modified = Column(TIMESTAMP, default=datetime.utcnow)
+    last_modified = Column(TIMESTAMP, default=lambda: datetime.now(timezone.utc))
     path = Column(String, default="", nullable=False)
     has_cover = Column(Integer, default=0)
     uuid = Column(String)
@@ -387,6 +400,7 @@ class Books(Base):
 
     def __init__(self, title, sort, author_sort, timestamp, pubdate, series_index, last_modified, path, has_cover,
                  authors, tags, languages=None):
+        super().__init__()
         self.title = title
         self.sort = sort
         self.author_sort = author_sort
@@ -395,12 +409,12 @@ class Books(Base):
         self.series_index = series_index
         self.last_modified = last_modified
         self.path = path
-        self.has_cover = (has_cover != None)
+        self.has_cover = (has_cover is not None)
 
     def __repr__(self):
         return "<Books('{0},{1}{2}{3}{4}{5}{6}{7}{8}')>".format(self.title, self.sort, self.author_sort,
-                                                                 self.timestamp, self.pubdate, self.series_index,
-                                                                 self.last_modified, self.path, self.has_cover)
+                                                                self.timestamp, self.pubdate, self.series_index,
+                                                                self.last_modified, self.path, self.has_cover)
 
     @property
     def atom_timestamp(self):
@@ -444,11 +458,13 @@ class CustomColumns(Base):
         content['is_editable'] = self.editable
         content['rec_index'] = sequence + 22     # toDo why ??
         if isinstance(value, datetime):
-            content['#value#'] = {"__class__": "datetime.datetime", "__value__": value.strftime("%Y-%m-%dT%H:%M:%S+00:00")}
+            content['#value#'] = {"__class__": "datetime.datetime",
+                                  "__value__": value.strftime("%Y-%m-%dT%H:%M:%S+00:00")}
         else:
             content['#value#'] = value
         content['#extra#'] = extra
-        content['is_multiple2'] = {} if not self.is_multiple else {"cache_to_list": "|", "ui_to_list": ",", "list_to_ui": ", "}
+        content['is_multiple2'] = {} if not self.is_multiple else {"cache_to_list": "|", "ui_to_list": ",",
+                                                                   "list_to_ui": ", "}
         return json.dumps(content, ensure_ascii=False)
 
 
@@ -507,7 +523,6 @@ class CalibreDB:
         self.session = None
         if init:
             self.init_db(expire_on_commit)
-
 
     def init_db(self, expire_on_commit=True):
         if self._init:
@@ -718,8 +733,8 @@ class CalibreDB:
     def common_filters(self, allow_show_archived=False, return_all_languages=False):
         if not allow_show_archived:
             archived_books = (ub.session.query(ub.ArchivedBook)
-                              .filter(ub.ArchivedBook.user_id == int(current_user.id))
-                              .filter(ub.ArchivedBook.is_archived == True)
+                              .filter(ub.ArchivedBook.user_id==int(current_user.id))
+                              .filter(ub.ArchivedBook.is_archived==True)
                               .all())
             archived_book_ids = [archived_book.book_id for archived_book in archived_books]
             archived_filter = Books.id.notin_(archived_book_ids)
@@ -839,8 +854,7 @@ class CalibreDB:
         entries = list()
         pagination = list()
         try:
-            pagination = Pagination(page, pagesize,
-                                    len(query.all()))
+            pagination = Pagination(page, pagesize, query.count())
             entries = query.order_by(*order).offset(off).limit(pagesize).all()
         except Exception as ex:
             log.error_or_exception(ex)
@@ -861,10 +875,11 @@ class CalibreDB:
             authors_ordered = list()
             # error = False
             for auth in sort_authors:
-                results = self.session.query(Authors).filter(Authors.sort == auth.lstrip().strip()).all()
+                auth = strip_whitespaces(auth)
+                results = self.session.query(Authors).filter(Authors.sort == auth).all()
                 # ToDo: How to handle not found author name
                 if not len(results):
-                    log.error("Author {} not found to display name in right order".format(auth.strip()))
+                    log.error("Author {} not found to display name in right order".format(auth))
                     # error = True
                     break
                 for r in results:
@@ -904,7 +919,7 @@ class CalibreDB:
             .filter(and_(Books.authors.any(and_(*q)), func.lower(Books.title).ilike("%" + title + "%"))).first()
 
     def search_query(self, term, config, *join):
-        term.strip().lower()
+        strip_whitespaces(term).lower()
         self.session.connection().connection.connection.create_function("lower", 1, lcase)
         q = list()
         author_terms = re.split("[, ]+", term)
@@ -956,7 +971,7 @@ class CalibreDB:
         pagination = None
         result = self.search_query(term, config, *join).order_by(*order).all()
         result_count = len(result)
-        if offset != None and limit != None:
+        if offset is not None and limit is not None:
             offset = int(offset)
             limit_all = offset + int(limit)
             pagination = Pagination((offset / (int(limit)) + 1), limit, result_count)
@@ -986,7 +1001,7 @@ class CalibreDB:
             if not return_all_languages:
                 no_lang_count = (self.session.query(Books)
                                  .outerjoin(books_languages_link).outerjoin(Languages)
-                                 .filter(Languages.lang_code == None)
+                                 .filter(Languages.lang_code==None)
                                  .filter(self.common_filters())
                                  .count())
                 if no_lang_count:
@@ -1012,13 +1027,13 @@ class CalibreDB:
             if match:
                 prep = match.group(1)
                 title = title[len(prep):] + ', ' + prep
-            return title.strip()
+            return strip_whitespaces(title)
 
         try:
-            # sqlalchemy <1.4.24
+            # sqlalchemy <1.4.24 and sqlalchemy 2.0
             conn = conn or self.session.connection().connection.driver_connection
         except AttributeError:
-            # sqlalchemy >1.4.24 and sqlalchemy 2.0
+            # sqlalchemy >1.4.24
             conn = conn or self.session.connection().connection.connection
         try:
             conn.create_function("title_sort", 1, _title_sort)
@@ -1084,9 +1099,3 @@ class Category:
         self.id = cat_id
         self.rating = rating
         self.count = 1
-
-'''class Count:
-    count = None
-
-    def __init__(self, count):
-        self.count = count'''
